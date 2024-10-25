@@ -1,0 +1,315 @@
+*deck,usermat3d    USERDISTRIB  parallel                                gal
+      subroutine usermat3d(
+     &                   matId, elemId,kDomIntPt, kLayer, kSectPt,
+     &                   ldstep,isubst,keycut,
+     &                   nDirect,nShear,ncomp,nStatev,nProp,
+     &                   Time,dTime,Temp,dTemp,
+     &                   stress,ustatev,dsdePl,sedEl,sedPl,epseq,
+     &                   Strain,dStrain, epsPl, prop, coords, 
+     &                   var0, defGrad_t, defGrad,
+     &                   tsstif, epsZZ, cutFactor, 
+     &                   var1, var2, var3, var4, var5,
+     &                   var6, var7)
+c*************************************************************************
+c    !Input parameters
+c*************************************************************************
+      INTEGER          isubst2,nnn,ALLO
+      DOUBLE PRECISION aa,bb,cc,dd,ee,ff,doh,acten,myvalue1,myvalue,
+     &                 PW3,PW2,PW1,CONS,a4,a5,StrainTH,
+     &                 crt1,crt2,Dcrt,Modulus,SETT,PoisRatio,TECC,
+     &                 q1T,q2T,q3T,q4T,q5T,
+     &                 q1TU,q2TU,q3TU,q4TU,q5TU,
+     &                 q1,q2,q3,q4,q5,
+     &                 IncStress,TotalCreep,delcr,
+     &                 jtime,jtp,jqftp,jzttp,jr,jqttp,
+     &                 jq3term,jq4term,jq2term,jcrt,
+     &                 qftp,jrr,zp,qp,stra,doh1p,CSInc,
+     &                 EpEt,EpCrx,EpCry,EpCrz,
+     &                 EpCrxy,EpCryz,EpCrxz
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: deqvage
+      DOUBLE PRECISION,DIMENSION(:,:,:),ALLOCATABLE,SAVE :: StrainTHM
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: stCR
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: CrM
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: TEpCrx
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: TEpCry
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: TEpCrz
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: TEpCrxy
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: TEpCryz
+      DOUBLE PRECISION,DIMENSION(:,:),ALLOCATABLE,SAVE :: TEpCrxz
+      common           ALLO
+c
+      IF (ALLO == 100) THEN
+      ELSE
+       ALLOCATE (deqvage(80000,2000))
+       ALLOCATE (StrainTHM(80000,2000,8))
+       ALLOCATE (stCR(80000,2000))
+       ALLOCATE (CrM(80000,8))
+       ALLOCATE (TEpCrx(80000,8))
+       ALLOCATE (TEpCry(80000,8))
+       ALLOCATE (TEpCrz(80000,8))
+       ALLOCATE (TEpCrxy(80000,8))
+       ALLOCATE (TEpCryz(80000,8))
+       ALLOCATE (TEpCrxz(80000,8))
+       ALLO = 100
+      END IF
+c*************************************************************************
+c     !Degree of hydration parameters (Unitless)
+      aa = 0.747
+      bb = 9.297
+      cc = 0.612
+      dd = 0.0000
+      ee = 1.0000
+      ff = 1.0000
+c     !Activation energy (J/mol)
+      acten = 37347.
+c     !Strength and Young's modulus development
+c     !(1,2,3 represent the power of DOH term, a4 should be in psi)
+      PW3 = 0.0
+      PW2 = 0.0
+      PW1 = 9686.3
+      CONS = -1774.9
+      a4 = 67825.
+      a5 = 2.
+c     !Poisson's Ratio
+      PoisRatio = 0.2
+c     !Define approximate time to start the expansion of concrete (in hour)
+      SETT = 0.0
+c     !Thermal Expansion Coefficient (1/degree C)
+      TECC = 8.514E-6
+c     !MODIFIED B3 PARAMETERS (Load)
+      q1T = 21.2
+      q2T = 78.7
+      q3T = 15.0
+      q4T = 10.9
+      q5T = 0.2
+c     !MODIFIED B3 PARAMETERS (Unload,assumed twice as loading)
+      q1TU = 21.2
+      q2TU = 78.7
+      q3TU = 15.0*2.0
+      q4TU = 10.9*2.0
+      q5TU = 0.2
+c*************************************************************************
+c    !The number of steps must be adjusted here when two steps or more used in the analysis
+c    !For example, second step starts from 8 hours with 0.1 hour step, therefore, 80 is the shift
+c
+      if (ldstep == 3) then
+          isubst2 = 1200+isubst
+      else if (ldstep == 2) then
+          isubst2 = 80+isubst
+      else
+          isubst2 = isubst
+      end if
+c*************************************************************************
+c     !Equivalent age and degree of hydration calculations
+      myvalue1=exp((acten/8.314)*(1./296.-1/(273.+Temp)))
+      if (isubst2 .EQ. 1) then
+         deqvage(elemId,isubst2) = myvalue1*dTime/3600.
+      else
+         deqvage(elemId,isubst2) = 
+     &          deqvage(elemId,isubst2-1)
+     &          + myvalue1*dTime/3600.
+      end if
+      myvalue = deqvage(elemId,isubst2)
+      doh = aa*exp(-(bb/myvalue)**cc)+dd*exp(-(ee/myvalue)**ff)
+c*************************************************************************
+c     Calculation of Young's modulus based on degree of hydration
+c*************************************************************************
+      crt1 = (-PW1+((PW1)**2-4*PW2*CONS)**0.5)/(2.*PW2)
+      crt2 = (-PW1-((PW1)**2-4*PW2*CONS)**0.5)/(2.*PW2)
+c
+c     !Calculates doh when setting of concrete
+      if (crt2 > crt1) then
+         Dcrt = crt2
+      else
+         Dcrt = crt1
+      end if
+c
+c     !If linear and not parabolic
+      if (PW2 == 0.0) then
+         Dcrt = -CONS/PW1
+      end if
+c
+c     !The main elastic modulus function is the first equation. 
+c     !Other functions only used to create smooth modulus curve from being zero (before setting) 
+c     !to suddenly a high number after setting time.
+c     !First equation is in psi, second and third in psf (/144). ANSYS works in Pa.
+      if (doh > Dcrt+0.01) then
+         Modulus = (((PW3*doh**3.) + (PW2*doh**2.)
+     1    + PW1*doh + CONS)**(1/a5))*a4*1000000.
+      else if (doh > Dcrt-0.05) then
+         Modulus = (5.8E10*((doh-Dcrt+0.05)**2)+2.6E7)
+     1    *1000000./145.038/144.
+      else
+         Modulus = 1.9E9*(doh**3)
+     1    *1000000./145.038/144.
+      end if
+c*************************************************************************
+      young    = Modulus
+      posn     = PoisRatio
+c*************************************************************************
+c     !Calculation of thermal strain
+c*************************************************************************
+c     !All concrete elements start to expand/contract after the analysis time reaches SETT
+      if (Time .LE. SETT*3600.) Then
+         StrainTHM(elemId,isubst2,kDomIntPt) = 0.
+      else
+         StrainTHM(elemId,isubst2,kDomIntPt) = 
+     &   StrainTHM(elemId,isubst2-1,kDomIntPt) + TECC*dTemp
+         StrainTH = StrainTHM(elemId,isubst2,kDomIntPt)
+      end if
+c*************************************************************************
+c     !Calculation of creep strain rate
+c*************************************************************************
+      jtime = deqvage(elemId,isubst2)/24.0
+c
+      TotalCreep = 0.0
+      do nnn = 1,isubst2-1,1
+c*************************************************************************
+         if (nnn*dtime/3600. .LE. SETT) then
+           IncStress = 0.0
+         else
+           IncStress = 
+     &     stCR(elemId,nnn)-stCR(elemId,nnn-1)
+         end if
+c*************************************************************************
+c       !Loading or unloading creep parameters based on stress increment
+        if (nnn == 1) then
+           q1 = q1T
+           q2 = q2T
+           q3 = q3T
+           q4 = q4T
+           q5 = q5T
+        else if (IncStress .GE. 0) then 
+           q1 = q1T
+           q2 = q2T
+           q3 = q3T
+           q4 = q4T
+           q5 = q5T
+        else if (IncStress .LT. 0) then 
+           q1 = q1TU
+           q2 = q2TU
+           q3 = q3TU
+           q4 = q4TU
+           q5 = q5TU
+        end if
+c*************************************************************************
+c      !Calculation of B3 model's creep compliance function
+       jtp = deqvage(elemId,nnn)/24.0
+       jqftp = (0.086*jtp**(2./9.)+1.21*jtp**(4./9.))**(-1.)
+       jzttp = jtp**(-0.5)*log(1.+(jtime-jtp)**0.1)
+       jr = 1.7*jtp**0.12+8.
+       jqttp = jqftp*(1.+(jqftp/jzttp)**jr)**(-1./jr)
+       jq3term = q3*log(1.+(jtime-jtp)**0.1)
+       jq4term = q4*log(jtime/jtp)
+       jq2term = q2*(jtp/(jtp-q5))*jqttp
+c*************************************************************************
+c      !Jcrt is creep compliance function J(t,t') per strain (/pa)
+       jcrt = (q1+((jq2term+jq3term+jq4term)))/1000000000000.
+c*************************************************************************
+c      !Calculation of elastic strain using J(t'+0.25/24,t')
+       qftp = (0.086*jtime**(2./9.)+1.21*jtime**(4./9.))**(-1.)
+       jrr = 1.7*jtime**0.12+8.
+       zp = jtime**(-0.5)*log(1.+((jtime+(0.25/24))-jtime)**0.1)
+       qp = qftp*(1.+(qftp/zp)**jrr)**(-1./jrr)
+       stra = (q1+q2*(jtime/(jtime-q5))*qp)/1000000000000.
+c*************************************************************************
+c      !Calculation of creep strain (No creep before setting time)
+       doh1p = aa*exp(-(bb/(jtp*24.))**cc)+dd*exp(-(ee/(jtp*24.))**ff)
+c*************************************************************************
+       if (doh1p .GT. Dcrt .AND.
+     &    jtp .GT. q5 .AND. jtp .LT. jtime) then
+          CSInc = (jcrt-stra)*IncStress
+       else
+          CSInc = 0.0
+       end if
+c*************************************************************************
+       TotalCreep = TotalCreep + CSInc
+      end do
+c*************************************************************************
+      if (isubst2 .LE. 1) then
+         delcr = TotalCreep
+      else
+         delcr = TotalCreep
+     &           - CrM(elemId,kDomIntPt)
+      end if
+      CrM(elemId,kDomIntPt) = TotalCreep
+c*************************************************************************
+c      !Change of strain components based on thermal and creep (in previous step) strain
+       if (isubst2 .GE. 2) then
+       Strain(1) = Strain(1) 
+     &           - TEpCrx(elemId,kDomIntPt) - StrainTH
+       Strain(2) = Strain(2) 
+     &           - TEpCry(elemId,kDomIntPt) - StrainTH
+       Strain(3) = Strain(3) 
+     &           - TEpCrz(elemId,kDomIntPt) - StrainTH
+       Strain(4) = Strain(4) 
+     &           - TEpCrxy(elemId,kDomIntPt)
+       Strain(5) = Strain(5) 
+     &           - TEpCryz(elemId,kDomIntPt)
+       Strain(6) = Strain(6) 
+     &           - TEpCrxz(elemId,kDomIntPt)
+       end if
+c
+c      !Calculation of equivalent modified total strain
+c
+       EpEt = sqrt((Strain(1)-Strain(2))**2.
+     &        +(Strain(2)-Strain(3))**2.
+     &        +(Strain(3)-Strain(1))**2.
+     &        +3.*(Strain(4)**2.)/2.
+     &        +3.*(Strain(5)**2.)/2.
+     &        +3.*(Strain(6)**2.)/2.)
+       EpEt = EpEt/(sqrt(2.)*(1+PoisRatio))
+c
+c     !Calculation of creep rate in different directions
+c
+      if (EpEt > 0.0) then
+       EpCrx = (delcr/EpEt)
+     &         *((2.*Strain(1)-Strain(2)-Strain(3))
+     &         /(2.*(1+PoisRatio)))
+       EpCry = (delcr/EpEt)
+     &         *((2.*Strain(2)-Strain(3)-Strain(1))
+     &         /(2.*(1+PoisRatio)))
+       EpCrz = -EpCrx - EpCry
+       EpCrxy = (delcr/EpEt)
+     &          *(3./(2.+2.*PoisRatio))*Strain(4)
+       EpCryz = (delcr/EpEt)
+     &          *(3./(2.+2.*PoisRatio))*Strain(5)
+       EpCrxz = (delcr/EpEt)
+     &          *(3./(2.+2.*PoisRatio))*Strain(6)
+c
+c      !Update of creep strains in different directions
+c
+       TEpCrx(elemId,kDomIntPt) = 
+     &      TEpCrx(elemId,kDomIntPt) + EpCrx
+       TEpCry(elemId,kDomIntPt) = 
+     &      TEpCry(elemId,kDomIntPt) + EpCry
+       TEpCrz(elemId,kDomIntPt) = 
+     &      TEpCrz(elemId,kDomIntPt) + EpCrz
+       TEpCrxy(elemId,kDomIntPt) = 
+     &      TEpCrxy(elemId,kDomIntPt) + EpCrxy
+       TEpCryz(elemId,kDomIntPt) = 
+     &      TEpCryz(elemId,kDomIntPt) + EpCryz
+       TEpCrxz(elemId,kDomIntPt) = 
+     &      TEpCrxz(elemId,kDomIntPt) + EpCrxz
+c
+c      !Update of total strains in diffent directions for current step
+c
+       Strain(1) = Strain(1) - EpCrx
+       Strain(2) = Strain(2) - EpCry
+       Strain(3) = Strain(3) - EpCrz
+       Strain(4) = Strain(4) - EpCrxy
+       Strain(5) = Strain(5) - EpCryz
+       Strain(6) = Strain(6) - EpCrxz
+      end if
+c*************************************************************************
+c     !Exporting the creep strain in x(SVAR8), Y(SVAR9) and Z(SVAR10) directions in state variables
+      if (kDomIntPt .EQ. 1 
+     &   .AND. isubst2 .GT. 1) then
+         ustatev(8) = TEpCrx(elemId,kDomIntPt)
+         ustatev(9) = TEpCry(elemId,kDomIntPt)
+         ustatev(10) = TEpCrz(elemId,kDomIntPt)
+      end if
+c*************************************************************************
+c     !Save VON MISES stress as equivalent stress for creep strain rate calculations
+      stCR(elemId,isubst2) = qEl
+c*************************************************************************
